@@ -23,6 +23,9 @@ jobs:
       - name: Byte-compile Python sources
         run: python -m compileall scripts flows dashboard
 
+      - name: Prefect flow CLI parses
+        run: python flows/trade_pipeline.py --help
+
       - name: Generate local sample Parquet (offline)
         run: python scripts/generate_trade_sample.py --out /tmp/trade_monthly.parquet
 

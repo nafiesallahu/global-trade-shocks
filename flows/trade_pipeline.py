@@ -1,10 +1,11 @@
 """
-Prefect DAG: generate trade panel → GCS data lake → BigQuery warehouse → dbt transforms.
+Prefect DAG: land Parquet (sample or UN Comtrade) → GCS data lake → BigQuery warehouse → dbt transforms.
 
 Prefect is workflow orchestration (similar role to Airflow): schedules, retries, observability.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -23,6 +24,18 @@ def generate_local_parquet() -> Path:
     logger = get_run_logger()
     out = ROOT / "data/raw/trade_monthly.parquet"
     cmd = [sys.executable, str(ROOT / "scripts/generate_trade_sample.py"), "--out", str(out)]
+    logger.info("Running: %s", " ".join(cmd))
+    subprocess.check_call(cmd, cwd=str(ROOT))
+    return out
+
+
+@task(name="fetch-comtrade-parquet")
+def fetch_comtrade_parquet() -> Path:
+    """Pull a real slice from the UN Comtrade API into the same Parquet layout as the sample generator."""
+    load_dotenv(ROOT / ".env")
+    logger = get_run_logger()
+    out = ROOT / "data/raw/trade_monthly.parquet"
+    cmd = [sys.executable, str(ROOT / "scripts/fetch_comtrade.py"), "--out", str(out)]
     logger.info("Running: %s", " ".join(cmd))
     subprocess.check_call(cmd, cwd=str(ROOT))
     return out
@@ -65,13 +78,32 @@ def dbt_run() -> None:
 
 
 @flow(name="global-trade-shocks-pipeline", log_prints=True)
-def trade_pipeline() -> None:
-    """End-to-end pipeline for peer review: multiple sequential steps in one flow."""
-    path = generate_local_parquet()
+def trade_pipeline(source: str = "sample") -> None:
+    """End-to-end pipeline for peer review: multiple sequential steps in one flow.
+
+    Args:
+        source: ``sample`` — offline synthetic panel (default, CI-friendly).
+            ``comtrade`` — real UN Comtrade HTTP extract (needs network; optional subscription key in ``.env``).
+    """
+    if source == "sample":
+        path = generate_local_parquet()
+    elif source == "comtrade":
+        path = fetch_comtrade_parquet()
+    else:
+        raise ValueError(f"Unknown source: {source!r} (use 'sample' or 'comtrade')")
+
     uri = upload_to_gcs(path)
     load_bigquery(uri)
     dbt_run()
 
 
 if __name__ == "__main__":
-    trade_pipeline()
+    parser = argparse.ArgumentParser(description="Run the global-trade-shocks Prefect pipeline.")
+    parser.add_argument(
+        "--source",
+        choices=("sample", "comtrade"),
+        default="sample",
+        help="sample = offline synthetic Parquet (default). comtrade = real UN Comtrade API extract.",
+    )
+    args = parser.parse_args()
+    trade_pipeline(source=args.source)

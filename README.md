@@ -2,7 +2,18 @@
 
 **Which partners and products moved?** A small end-to-end analytics pipeline that lands monthly bilateral trade facts in a **cloud data lake**, loads a **partitioned BigQuery warehouse**, models **dbt** marts for a **Streamlit** dashboard, and orchestrates everything with **Prefect** (workflow engine — same role as Airflow: DAGs, schedules, retries).
 
-This repository is **standalone** (not related to any other course repo). Synthetic trade data is generated locally so reviewers can reproduce results without API keys; you can later swap the extract step for [UN Comtrade](https://comtradeplus.un.org/) or national bulk files.
+This repository is **standalone** (not related to any other course repo).
+
+### Data sources (important for peer review)
+
+| Mode | Command | What it is |
+|------|---------|----------------|
+| **Real dataset (recommended for grading)** | `python flows/trade_pipeline.py --source comtrade` | [UN Comtrade](https://comtradeplus.un.org/) API → same Parquet schema as the rest of the pipeline. Needs network; optional `COMTRADE_SUBSCRIPTION_KEY` in `.env` for higher limits (see below). |
+| **Offline demo** | `python flows/trade_pipeline.py` (default) or `--source sample` | Deterministic **synthetic** panel with the same columns — useful when you have no API access or want a quick UI check. |
+
+For the course wording *“selecting a dataset of interest”*, treat **`--source comtrade`** as the primary path; use **`sample`** only as a reproducible fallback.
+
+**Alignment with the course “Datasets” list:** The primary dataset is **UN international merchandise trade statistics** from **[UN Comtrade](https://comtradeplus.un.org/)** (official API via `scripts/fetch_comtrade.py`, wired into `python flows/trade_pipeline.py --source comtrade`). That matches the spirit of the course’s public trade / macro datasets. **Synthetic `sample` data** is only a schema-identical fallback when reviewers run the pipeline without network access.
 
 ---
 
@@ -16,7 +27,7 @@ Policy shocks, conflicts, and supply-chain disruptions change trade patterns: so
 
 ```mermaid
 flowchart LR
-  A[Python: generate Parquet] --> B[GCS bucket: raw Parquet]
+  A[Python: Comtrade or sample → Parquet] --> B[GCS bucket: raw Parquet]
   B --> C[BigQuery: native fact table]
   C --> D[dbt: staging + marts]
   D --> E[Streamlit dashboard]
@@ -50,6 +61,8 @@ flowchart LR
 - Python **3.11+**
 - **Google Cloud** project + **service account** with roles such as *Storage Object Admin* and *BigQuery Data Editor* / *Job User* (tighten for production).
 - **Terraform** `>= 1.5`
+
+**dbt + BigQuery:** `dbt_trade/profiles.yml` uses **service-account JSON** auth. Set `GOOGLE_APPLICATION_CREDENTIALS` in `.env` to an **absolute path** to your key file. Application Default Credentials (`gcloud auth application-default login`) alone are **not** enough for `dbt run` with this profile.
 
 ---
 
@@ -86,16 +99,34 @@ Sync bucket/dataset names into `.env` (`GCS_BUCKET`, `BQ_DATASET`, `GCP_PROJECT_
 
 From the repo root (with `.venv` active):
 
+**Grading / real dataset path (UN Comtrade inside the DAG):**
+
 ```bash
-python flows/trade_pipeline.py
+python flows/trade_pipeline.py --source comtrade
 ```
+
+**Offline / no API (synthetic panel):**
+
+```bash
+python flows/trade_pipeline.py --source sample
+```
+
+`--source` defaults to `sample` so clones without network still have a working path.
 
 This runs, in order:
 
-1. Build `data/raw/trade_monthly.parquet`
+1. Build `data/raw/trade_monthly.parquet` (**Comtrade** or **sample**, per `--source`)
 2. Upload to `gs://$GCS_BUCKET/raw/trade_monthly/`
 3. Load BigQuery staging + rebuild **`fct_trade_monthly`** (partitioned/clustered)
 4. `dbt run` for staging + marts
+
+**Custom Comtrade parameters:** `python flows/trade_pipeline.py --source comtrade` runs `scripts/fetch_comtrade.py` with its built-in defaults (`python scripts/fetch_comtrade.py --help` for flags). To use another reporter, period, or commodity list, write Parquet to `data/raw/trade_monthly.parquet`, then run the lake → warehouse → dbt leg:
+
+```bash
+python scripts/upload_to_gcs.py --local data/raw/trade_monthly.parquet
+python scripts/load_bq_from_gcs.py
+dbt run --project-dir dbt_trade --profiles-dir dbt_trade
+```
 
 ### 4) Dashboard
 
@@ -103,7 +134,9 @@ This runs, in order:
 streamlit run dashboard/app.py
 ```
 
-Open the local URL. You should see:
+Open the local URL (Streamlit prints `http://localhost:8501`). Peers can reproduce the same view by cloning the repo, configuring `.env`, running the pipeline, and starting Streamlit. If your course asks for a link without local setup, add a short **Loom walkthrough**, **screenshots** in the repo, or deploy with [Streamlit Community Cloud](https://streamlit.io/cloud) using your own secrets management.
+
+You should see:
 
 1. **Tile 1 — categorical:** HS2 chapter mix of imports (bar chart + table).
 2. **Tile 2 — temporal:** monthly import totals (line chart).
@@ -117,11 +150,12 @@ Open the local URL. You should see:
 - **Orchestration:** Prefect flow with multiple sequential tasks (full DAG); data uploaded to the lake inside the flow.
 - **Transformations:** dbt models (`stg_*`, `mart_*`).
 - **Dashboard:** Streamlit, **≥ 2 tiles**, categorical + temporal, titled sections.
+- **Dataset:** Real **UN Comtrade** extract via `--source comtrade`; synthetic **`sample`** for offline demos.
 - **Reproducibility:** No hardcoded machine paths; configure via `.env` and `terraform.tfvars`.
 
 ---
 
-## Optional: real UN Comtrade extract
+## UN Comtrade extract (reference)
 
 `scripts/fetch_comtrade.py` calls the official HTTPS endpoints used by the UN’s own Python client (`comtradeapicall`):
 
@@ -130,16 +164,23 @@ Open the local URL. You should see:
 
 The script maps Comtrade JSON rows into the same Parquet columns as the generator (`trade_month`, `reporter_iso`, `partner_iso`, `hs_chapter`, `trade_flow`, `trade_value_usd`) and handles **timeouts, connection errors, 401/403/404, 5xx, and invalid JSON** with clear exit codes.
 
+Example (public preview — small row cap):
+
 ```bash
-# Example: Australia (M49 36) imports of HS chapter 91, Jan 2023 — public preview
 python scripts/fetch_comtrade.py --period 202301 --reporter 36 --cmd-codes 91 --flow M --out data/raw/trade_monthly.parquet
 ```
 
-Then run `scripts/upload_to_gcs.py`, `scripts/load_bq_from_gcs.py`, and `dbt run` as usual (or wire this step into Prefect).
+## Submitting a zip (peer review)
+
+Do **not** ship `.git/`, `__pycache__/`, `.venv/`, `*.tfstate*`, or your `.env` / service-account JSON inside a coursework zip. Prefer a clean export, for example:
+
+```bash
+git archive -o global-trade-shocks.zip HEAD
+```
 
 ## CI
 
-GitHub Actions workflow `.github/workflows/ci.yml` installs dependencies, byte-compiles Python, runs the **offline** generator, and performs an **optional, non-blocking** Comtrade smoke request (continues on failure if the API rate-limits).
+GitHub Actions workflow `.github/workflows/ci.yml` installs dependencies, byte-compiles Python, checks `python flows/trade_pipeline.py --help`, runs the **offline** generator, and performs an **optional, non-blocking** Comtrade smoke request (continues on failure if the API rate-limits).
 
 ## Optional extensions
 
