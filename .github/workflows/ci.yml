@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Byte-compile Python sources
+        run: python -m compileall scripts flows dashboard
+
+      - name: Generate local sample Parquet (offline)
+        run: python scripts/generate_trade_sample.py --out /tmp/trade_monthly.parquet
+
+      - name: Verify Parquet readable
+        run: python -c "import pandas as pd; df=pd.read_parquet('/tmp/trade_monthly.parquet'); assert len(df)>0; print(df.head(1).to_dict())"
+
+      # Optional smoke call to UN Comtrade public preview (network; may rate-limit).
+      - name: Smoke — Comtrade public preview (non-blocking)
+        continue-on-error: true
+        run: |
+          python scripts/fetch_comtrade.py --out /tmp/comtrade.parquet --period 202301 --reporter 36 --cmd-codes 91 --flow M --max-records 100

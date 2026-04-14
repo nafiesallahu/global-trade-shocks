@@ -121,11 +121,30 @@ Open the local URL. You should see:
 
 ---
 
+## Optional: real UN Comtrade extract
+
+`scripts/fetch_comtrade.py` calls the official HTTPS endpoints used by the UN’s own Python client (`comtradeapicall`):
+
+- **No key:** `public/v1/preview/...` (small row cap, good for demos).
+- **With key:** set `COMTRADE_SUBSCRIPTION_KEY` in `.env` to use `data/v1/get/...` (register at [Comtrade Developer Portal](https://comtradedeveloper.un.org/)).
+
+The script maps Comtrade JSON rows into the same Parquet columns as the generator (`trade_month`, `reporter_iso`, `partner_iso`, `hs_chapter`, `trade_flow`, `trade_value_usd`) and handles **timeouts, connection errors, 401/403/404, 5xx, and invalid JSON** with clear exit codes.
+
+```bash
+# Example: Australia (M49 36) imports of HS chapter 91, Jan 2023 — public preview
+python scripts/fetch_comtrade.py --period 202301 --reporter 36 --cmd-codes 91 --flow M --out data/raw/trade_monthly.parquet
+```
+
+Then run `scripts/upload_to_gcs.py`, `scripts/load_bq_from_gcs.py`, and `dbt run` as usual (or wire this step into Prefect).
+
+## CI
+
+GitHub Actions workflow `.github/workflows/ci.yml` installs dependencies, byte-compiles Python, runs the **offline** generator, and performs an **optional, non-blocking** Comtrade smoke request (continues on failure if the API rate-limits).
+
 ## Optional extensions
 
-- Replace `scripts/generate_trade_sample.py` with a Comtrade bulk/API extract (handle HTTP errors, respect API keys via env vars).
 - Add `prefect deployment build` / `prefect server start` for scheduled runs.
-- Add tests + CI (not graded in the course brief, but portfolio-friendly).
+- Add unit tests around `comtrade_to_pipeline_df` (pure function — easy to test).
 
 ---
 
