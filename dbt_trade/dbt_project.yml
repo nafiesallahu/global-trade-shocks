@@ -1,0 +1,23 @@
+name: "global_trade_shocks"
+version: "1.0.0"
+config-version: 2
+
+profile: "global_trade_shocks"
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+vars:
+  gcp_project_id: "{{ env_var('GCP_PROJECT_ID') }}"
+  bq_dataset: "{{ env_var('BQ_DATASET') }}"
+
+models:
+  global_trade_shocks:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

@@ -1,0 +1,11 @@
+version: 2
+
+models:
+  - name: mart_hs_chapter_import_mix
+    description: >
+      Import value aggregated to HS2 chapter for a bar/pie chart.
+      Clustering on hs_chapter aligns with GROUP BY hs_chapter in typical BI queries.
+  - name: mart_monthly_import_trend
+    description: >
+      Monthly import totals for line charts.
+      Partitioning by trade_month matches time-range filters; clustering by reporter supports multi-country expansion.

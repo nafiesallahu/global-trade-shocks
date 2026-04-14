@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: trade_raw
+    description: "Native BigQuery fact loaded from GCS Parquet (data lake landing)."
+    database: "{{ var('gcp_project_id') }}"
+    schema: "{{ var('bq_dataset') }}"
+    tables:
+      - name: fct_trade_monthly
+        description: "Monthly bilateral trade by HS chapter (partitioned & clustered upstream)."
